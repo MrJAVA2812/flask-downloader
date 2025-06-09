@@ -13,11 +13,10 @@ CORS(app)
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"  # Ajouté ici
-
 
 def get_file_size_in_mb(path: str) -> float:
-    return os.path.getsize(path) / (1024 * 1024)
+    size_bytes = os.path.getsize(path)
+    return size_bytes / (1024 * 1024)
 
 
 def sanitize_filename(name: str) -> str:
@@ -39,7 +38,7 @@ def download():
         "quiet": True,
         "skip_download": True,
         "no_warnings": True,
-        "user_agent": USER_AGENT,
+        "force_ipv6": True  # 👈 Ajouté ici
     }
 
     try:
@@ -133,14 +132,17 @@ def combine():
         return jsonify({"error": "Paramètres manquants"}), 400
 
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "user_agent": USER_AGENT}) as ydl:
+        with yt_dlp.YoutubeDL({
+            "quiet": True,
+            "skip_download": True,
+            "force_ipv6": True  # 👈 aussi ici
+        }) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
 
     title = info.get("title") or "video"
     safe_title = sanitize_filename(title)
-
     original_ext = "mp4" if content_type == "video" else "mp3"
     original_filename = os.path.join(DOWNLOAD_FOLDER, f"{uuid.uuid4()}_original.{original_ext}")
     final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext}")
@@ -153,7 +155,7 @@ def combine():
         "nocheckcertificate": True,
         "no_warnings": True,
         "noplaylist": True,
-        "user_agent": USER_AGENT,
+        "force_ipv6": True  # 👈 ici aussi
     }
 
     try:
@@ -202,11 +204,18 @@ def combine():
 def serve_file(filename):
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
     if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
+        response = send_file(file_path, as_attachment=True)
+        # Supprime le fichier après l'envoi
+        @response.call_on_close
+        def cleanup():
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        return response
     else:
         return jsonify({"error": "Fichier introuvable"}), 404
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True)
