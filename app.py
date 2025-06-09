@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file  # type: ignore
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import yt_dlp
 import os
@@ -6,34 +6,23 @@ import uuid
 import subprocess
 import json
 import re
-import time
 
 app = Flask(__name__)
-CORS(app)  # Vous pouvez restreindre ici avec origins=["https://votre-domaine.com"]
+CORS(app)
 
-# Folder to temporarily store downloaded files
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
+COOKIES_FILE = "cookies.txt"  # Le fichier doit être dans le même dossier que ce script
 
 def get_file_size_in_mb(path: str) -> float:
     size_bytes = os.path.getsize(path)
     return size_bytes / (1024 * 1024)
 
-
 def sanitize_filename(name: str) -> str:
     name = name.lower().strip()
     name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
     return name[:100].rstrip("_.")
-
-
-def cleanup_old_files(directory, max_age_seconds=3600):
-    now = time.time()
-    for filename in os.listdir(directory):
-        filepath = os.path.join(directory, filename)
-        if os.path.isfile(filepath) and now - os.path.getmtime(filepath) > max_age_seconds:
-            os.remove(filepath)
-
 
 @app.route("/download", methods=["POST"])
 def download():
@@ -48,6 +37,8 @@ def download():
         "quiet": True,
         "skip_download": True,
         "no_warnings": True,
+        "force_ipv6": True,
+        "cookiefile": COOKIES_FILE  # 👈 Cookies ajoutés ici
     }
 
     try:
@@ -70,11 +61,7 @@ def download():
                 ext = fmt.get("ext")
                 vcodec = fmt.get("vcodec")
 
-                if (
-                    ext in ["webm", "mp4"]
-                    and height and height >= 720
-                    and vcodec != "none"
-                ):
+                if ext in ["webm", "mp4"] and height and height >= 720 and vcodec != "none":
                     key = (height, ext)
                     if key not in seen:
                         filtered.append({
@@ -141,7 +128,12 @@ def combine():
         return jsonify({"error": "Paramètres manquants"}), 400
 
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
+        with yt_dlp.YoutubeDL({
+            "quiet": True,
+            "skip_download": True,
+            "force_ipv6": True,
+            "cookiefile": COOKIES_FILE  # 👈 Cookies ici aussi
+        }) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
@@ -160,6 +152,8 @@ def combine():
         "nocheckcertificate": True,
         "no_warnings": True,
         "noplaylist": True,
+        "force_ipv6": True,
+        "cookiefile": COOKIES_FILE  # 👈 encore ici
     }
 
     try:
@@ -208,14 +202,19 @@ def combine():
 def serve_file(filename):
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
     if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
+        response = send_file(file_path, as_attachment=True)
+
+        @response.call_on_close
+        def cleanup():
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+
+        return response
     else:
         return jsonify({"error": "Fichier introuvable"}), 404
 
 
-# Nettoyage automatique à chaque démarrage
-cleanup_old_files(DOWNLOAD_FOLDER)
-
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True)
