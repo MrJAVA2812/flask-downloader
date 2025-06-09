@@ -24,6 +24,10 @@ def sanitize_filename(name: str) -> str:
     name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
     return name[:100].rstrip("_.")
 
+
+
+
+5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
 @app.route("/download", methods=["POST"])
 def download():
     data = request.get_json()
@@ -37,8 +41,12 @@ def download():
         "quiet": True,
         "skip_download": True,
         "no_warnings": True,
+
         "force_ipv6": True,
         "cookiefile": COOKIES_FILE  # 👈 Cookies ajoutés ici
+
+        "force_ipv6": True  # 👈 Ajouté ici
+ 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
     }
 
     try:
@@ -131,8 +139,12 @@ def combine():
         with yt_dlp.YoutubeDL({
             "quiet": True,
             "skip_download": True,
+
             "force_ipv6": True,
             "cookiefile": COOKIES_FILE  # 👈 Cookies ici aussi
+
+            "force_ipv6": True  # 👈 aussi ici
+ 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
         }) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
@@ -152,8 +164,12 @@ def combine():
         "nocheckcertificate": True,
         "no_warnings": True,
         "noplaylist": True,
+ 
         "force_ipv6": True,
         "cookiefile": COOKIES_FILE  # 👈 encore ici
+
+        "force_ipv6": True  # 👈 ici aussi
+ 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
     }
 
     try:
@@ -203,14 +219,21 @@ def serve_file(filename):
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
     if os.path.exists(file_path):
         response = send_file(file_path, as_attachment=True)
+ HEAD
 
+
+        # Supprime le fichier après l'envoi
+ 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
         @response.call_on_close
         def cleanup():
             try:
                 os.remove(file_path)
             except Exception:
                 pass
+ HEAD
 
+
+ 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
         return response
     else:
         return jsonify({"error": "Fichier introuvable"}), 404
