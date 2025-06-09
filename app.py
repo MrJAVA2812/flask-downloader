@@ -25,9 +25,6 @@ def sanitize_filename(name: str) -> str:
     return name[:100].rstrip("_.")
 
 
-
-
-5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
 @app.route("/download", methods=["POST"])
 def download():
     data = request.get_json()
