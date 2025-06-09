@@ -141,7 +141,7 @@ def combine():
             "cookiefile": COOKIES_FILE  # 👈 Cookies ici aussi
 
             "force_ipv6": True  # 👈 aussi ici
- 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
+ 
         }) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
