@@ -166,7 +166,7 @@ def combine():
         "cookiefile": COOKIES_FILE  # 👈 encore ici
 
         "force_ipv6": True  # 👈 ici aussi
- 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
+ 
     }
 
     try:
@@ -220,7 +220,7 @@ def serve_file(filename):
 
 
         # Supprime le fichier après l'envoi
- 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
+
         @response.call_on_close
         def cleanup():
             try:
@@ -230,7 +230,7 @@ def serve_file(filename):
  HEAD
 
 
- 5fc224e69e0ee817874cdf3f4a40a85f8b7a4e49
+ 
         return response
     else:
         return jsonify({"error": "Fichier introuvable"}), 404
