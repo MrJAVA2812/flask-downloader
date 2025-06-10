@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  flask_app:
+    build: .
+    container_name: flask_video_app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./downloads:/app/downloads
+      - ./cookies.txt:/app/cookies.txt:ro
+    environment:
+      - FLASK_ENV=production
+    restart: unless-stopped
