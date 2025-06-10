@@ -1,0 +1,33 @@
+# Fichiers système
+*.db
+*.log
+*.ps1
+*.cmd
+*.hprof
+*.torrent
+*.exe
+*.zip
+*.rar
+*.mp4
+*.mp3
+*.avi
+*.png
+*.jpg
+*.jpeg
+*.ico
+*.xlsx
+
+# Python / Flask
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+instance/
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# Dossiers spécifiques à ton projet
+downloads/
