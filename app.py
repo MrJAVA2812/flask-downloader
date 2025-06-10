@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, send_file  # type: ignore
 from flask_cors import CORS
 import yt_dlp
 import os
@@ -6,56 +6,65 @@ import uuid
 import subprocess
 import json
 import re
-import io
-import time
 
 app = Flask(__name__)
 CORS(app)
 
+# Folder to temporarily store downloaded files
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-
-FILE_LIFETIME = 600  # 10 minutes
-
+COOKIES_PATH = "cookies.txt"
 
 def get_file_size_in_mb(path: str) -> float:
+    """
+    Returns file size in megabytes for given file path.
+    """
     size_bytes = os.path.getsize(path)
     return size_bytes / (1024 * 1024)
 
 
 def sanitize_filename(name: str) -> str:
+    """
+    Sanitize the video title to be a safe filename:
+    - Keep alphanumerics, underscores, dashes, and dots
+    - Remove/replace other characters
+    - Limit length to 100 characters
+    """
     name = name.lower().strip()
+    # Replace spaces and unusual chars with underscore
     name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
-    return name[:100].rstrip("_.")  # max 100 caractères
-
-
-def cleanup_old_files(folder: str, max_age_seconds: int):
-    now = time.time()
-    for filename in os.listdir(folder):
-        path = os.path.join(folder, filename)
-        if os.path.isfile(path) and now - os.path.getmtime(path) > max_age_seconds:
-            os.remove(path)
+    # Truncate to 100 characters
+    return name[:100].rstrip("_.")
 
 
 @app.route("/download", methods=["POST"])
 def download():
+    """
+    Analyzes the video/audio URL, returns available formats for frontend selection.
+    Supports 'video' or 'audio' via the 'type' field in JSON body.
+    """
     data = request.get_json()
     url = data.get("url")
-    content_type = data.get("type", "video")
+    content_type = data.get("type", "video")  # default to video type
 
     if not url:
         return jsonify({"error": "Aucun lien fourni"}), 400
 
-    ydl_opts = {"quiet": True, "skip_download": True, "no_warnings": True}
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "no_warnings": True,
+    }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
+        # Handle types with no formats or live videos
         if info.get("_type") == "url" or info.get("is_live") or not info.get("formats"):
             return jsonify({
                 "error": "Vidéo non disponible",
-                "thumbnail": info.get("thumbnail")
+                "thumbnail": info.get("thumbnail"),
             }), 400
 
         formats = info["formats"]
@@ -63,12 +72,17 @@ def download():
         seen = set()
 
         if content_type == "video":
+            # Filter video formats: ext mp4 or webm, height ≥ 720, and valid vcodec
             for fmt in formats:
                 height = fmt.get("height")
                 ext = fmt.get("ext")
                 vcodec = fmt.get("vcodec")
 
-                if ext in ["webm", "mp4"] and height and height >= 140 and vcodec != "none":
+                if (
+                    ext in ["webm", "mp4"]
+                    and height and height >= 720
+                    and vcodec != "none"
+                ):
                     key = (height, ext)
                     if key not in seen:
                         filtered.append({
@@ -82,25 +96,26 @@ def download():
 
             if not filtered:
                 return jsonify({
-                    "error": "Aucun format (140p ou plus) disponible.",
+                    "error": "Aucun format HD (720p ou plus) disponible.",
                     "thumbnail": info.get("thumbnail")
                 }), 400
 
         elif content_type == "audio":
+            # Select best audio format (mp3, m4a, webm) with highest abr
             best_audio = None
             best_bitrate = 0
 
             for fmt in formats:
                 ext = fmt.get("ext")
-                abr = fmt.get("abr")
+                abr = fmt.get("abr")  # audio bitrate
                 vcodec = fmt.get("vcodec")
 
                 if ext in ["mp3", "m4a", "webm"] and vcodec == "none":
-                    if abr and abr > best_bitrate:
+                    if abr is not None and abr > best_bitrate:
                         best_bitrate = abr
                         best_audio = {
                             "format_id": fmt["format_id"],
-                            "ext": "MP3",
+                            "ext": "MP3",  # Force display as MP3 per requirement
                             "abr": abr,
                             "vcodec": vcodec
                         }
@@ -113,6 +128,7 @@ def download():
 
             filtered.append(best_audio)
 
+        # Return video title sanitized, thumbnail, and filtered formats
         return jsonify({
             "title": info.get("title"),
             "thumbnail": info.get("thumbnail"),
@@ -125,32 +141,31 @@ def download():
 
 @app.route("/combine", methods=["POST"])
 def combine():
+    """
+    Download (and compress) requested format.
+    Rename output file to sanitized video title + extension.
+    """
     data = request.get_json()
     url = data.get("url")
     format_id = data.get("format_id")
     content_type = data.get("type", "video")
-    compress_to = int(data.get("compress_to", 1500))
+    compress_to = int(data.get("compress_to", 1080))  # max target height
 
     if not url or not format_id:
         return jsonify({"error": "Paramètres manquants"}), 400
 
+    # Extract video info to get title for renaming
     try:
         with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
 
-    # Vérifie que le format demandé est toujours disponible
-    formats = info.get("formats", [])
-    available_format_ids = {f["format_id"] for f in formats}
-    if format_id not in available_format_ids:
-        return jsonify({
-            "error": f"Le format {format_id} n'est plus disponible. Veuillez réessayer avec un autre format."
-        }), 400
-
+    # Sanitize title for filename
     title = info.get("title") or "video"
     safe_title = sanitize_filename(title)
 
+    # Determine file extension
     original_ext = "mp4" if content_type == "video" else "mp3"
     original_filename = os.path.join(DOWNLOAD_FOLDER, f"{uuid.uuid4()}_original.{original_ext}")
     final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext}")
@@ -166,10 +181,12 @@ def combine():
     }
 
     try:
+        # Download the video/audio file
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
         if content_type == "video":
+            # Probe video resolution
             probe_cmd = [
                 "ffprobe", "-v", "error",
                 "-select_streams", "v:0",
@@ -183,6 +200,7 @@ def combine():
 
             file_size_mb = get_file_size_in_mb(original_filename)
 
+            # Compress if over threshold resolution & size
             if height > compress_to and file_size_mb >= 100:
                 compress_cmd = [
                     "ffmpeg", "-i", original_filename,
@@ -199,8 +217,10 @@ def combine():
             else:
                 os.rename(original_filename, final_filename)
         else:
+            # For audio, just rename the file
             os.rename(original_filename, final_filename)
 
+        # Return URL of file ready for user download
         return jsonify({"url": f"/file/{os.path.basename(final_filename)}"})
 
     except Exception as e:
@@ -209,26 +229,14 @@ def combine():
 
 @app.route("/file/<path:filename>")
 def serve_file(filename):
+    """
+    Serves the requested file as attachment to trigger download in browser.
+    """
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
-    if not os.path.exists(file_path):
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    else:
         return jsonify({"error": "Fichier introuvable"}), 404
-
-    try:
-        with open(file_path, 'rb') as f:
-            data = f.read()
-
-        os.remove(file_path)
-
-        return Response(
-            io.BytesIO(data),
-            mimetype='application/octet-stream',
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"'
-            }
-        )
-
-    except Exception as e:
-        return jsonify({"error": f"Erreur lors de l'envoi : {str(e)}"}), 500
 
 
 if __name__ == "__main__":
