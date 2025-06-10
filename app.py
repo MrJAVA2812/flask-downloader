@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import yt_dlp
 import os
@@ -6,26 +6,38 @@ import uuid
 import subprocess
 import json
 import re
+import io
+import time
 
 app = Flask(__name__)
 CORS(app)
 
+# Dossier temporaire pour stocker les fichiers téléchargés
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-COOKIES_FILE = "cookies.txt"
+# Durée de vie max des fichiers (en secondes)
+FILE_LIFETIME = 600  # 10 minutes
 
-# 👇 Définir ici ton proxy HTTP/SOCKS (mettre "" si pas de proxy)
-PROXY = "http://username:password@proxyserver:port"  # Exemple : "http://127.0.0.1:8080"
 
 def get_file_size_in_mb(path: str) -> float:
     size_bytes = os.path.getsize(path)
     return size_bytes / (1024 * 1024)
 
+
 def sanitize_filename(name: str) -> str:
     name = name.lower().strip()
     name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
-    return name[:100].rstrip("_.") 
+    return name[:100].rstrip("_.")  # max 100 caractères
+
+
+def cleanup_old_files(folder: str, max_age_seconds: int):
+    now = time.time()
+    for filename in os.listdir(folder):
+        path = os.path.join(folder, filename)
+        if os.path.isfile(path) and now - os.path.getmtime(path) > max_age_seconds:
+            os.remove(path)
+
 
 @app.route("/download", methods=["POST"])
 def download():
@@ -36,14 +48,7 @@ def download():
     if not url:
         return jsonify({"error": "Aucun lien fourni"}), 400
 
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-        "no_warnings": True,
-        "force_ipv6": True,
-        "cookiefile": COOKIES_FILE,
-        "proxy": PROXY  # Proxy ajouté ici
-    }
+    ydl_opts = {"quiet": True, "skip_download": True, "no_warnings": True}
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -52,7 +57,7 @@ def download():
         if info.get("_type") == "url" or info.get("is_live") or not info.get("formats"):
             return jsonify({
                 "error": "Vidéo non disponible",
-                "thumbnail": info.get("thumbnail"),
+                "thumbnail": info.get("thumbnail")
             }), 400
 
         formats = info["formats"]
@@ -93,7 +98,7 @@ def download():
                 vcodec = fmt.get("vcodec")
 
                 if ext in ["mp3", "m4a", "webm"] and vcodec == "none":
-                    if abr is not None and abr > best_bitrate:
+                    if abr and abr > best_bitrate:
                         best_bitrate = abr
                         best_audio = {
                             "format_id": fmt["format_id"],
@@ -132,19 +137,14 @@ def combine():
         return jsonify({"error": "Paramètres manquants"}), 400
 
     try:
-        with yt_dlp.YoutubeDL({
-            "quiet": True,
-            "skip_download": True,
-            "force_ipv6": True,
-            "cookiefile": COOKIES_FILE,
-            "proxy": PROXY  # Proxy ajouté ici aussi
-        }) as ydl:
+        with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
 
     title = info.get("title") or "video"
     safe_title = sanitize_filename(title)
+
     original_ext = "mp4" if content_type == "video" else "mp3"
     original_filename = os.path.join(DOWNLOAD_FOLDER, f"{uuid.uuid4()}_original.{original_ext}")
     final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext}")
@@ -157,9 +157,6 @@ def combine():
         "nocheckcertificate": True,
         "no_warnings": True,
         "noplaylist": True,
-        "force_ipv6": True,
-        "cookiefile": COOKIES_FILE,
-        "proxy": PROXY  # Proxy ajouté ici aussi
     }
 
     try:
@@ -206,20 +203,31 @@ def combine():
 
 @app.route("/file/<path:filename>")
 def serve_file(filename):
+    """
+    Sert le fichier et le supprime après l'envoi.
+    """
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
-    if os.path.exists(file_path):
-        response = send_file(file_path, as_attachment=True)
-
-        @response.call_on_close
-        def cleanup():
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-
-        return response
-    else:
+    if not os.path.exists(file_path):
         return jsonify({"error": "Fichier introuvable"}), 404
 
+    try:
+        with open(file_path, 'rb') as f:
+            data = f.read()
+
+        os.remove(file_path)  # Supprime après lecture
+
+        return Response(
+            io.BytesIO(data),
+            mimetype='application/octet-stream',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": f"Erreur lors de l'envoi : {str(e)}"}), 500
 
 
+if __name__ == "__main__":
+    cleanup_old_files(DOWNLOAD_FOLDER, FILE_LIFETIME)
+    app.run(debug=True)
