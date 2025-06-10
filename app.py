@@ -14,31 +14,26 @@ CORS(app)
 
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
 FILE_LIFETIME = 600  # 10 minutes
 
 
-def get_file_size_in_mb(path: str) -> float:
-    size_bytes = os.path.getsize(path)
-    return size_bytes / (1024 * 1024)
+def get_file_size_in_mb(path):
+    return os.path.getsize(path) / (1024 * 1024)
 
 
-def sanitize_filename(name: str) -> str:
+def sanitize_filename(name):
     name = name.lower().strip()
     name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
     return name[:100].rstrip("_.")
 
 
-def cleanup_old_files(folder: str, max_age_seconds: int):
+def cleanup_old_files():
     now = time.time()
-    for filename in os.listdir(folder):
-        path = os.path.join(folder, filename)
-        if os.path.isfile(path) and now - os.path.getmtime(path) > max_age_seconds:
+    for filename in os.listdir(DOWNLOAD_FOLDER):
+        path = os.path.join(DOWNLOAD_FOLDER, filename)
+        if os.path.isfile(path) and now - os.path.getmtime(path) > FILE_LIFETIME:
             os.remove(path)
-
-
-@app.route("/")
-def index():
-    return "🚀 Serveur Flask actif et opérationnel sur Railway !"
 
 
 @app.route("/download", methods=["POST"])
@@ -50,10 +45,10 @@ def download():
     if not url:
         return jsonify({"error": "Aucun lien fourni"}), 400
 
-    ydl_opts = {"quiet": True, "skip_download": True, "no_warnings": True}
+    cleanup_old_files()
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "no_warnings": True}) as ydl:
             info = ydl.extract_info(url, download=False)
 
         if info.get("_type") == "url" or info.get("is_live") or not info.get("formats"):
@@ -79,7 +74,6 @@ def download():
                             "format_id": fmt["format_id"],
                             "ext": ext,
                             "resolution": f"{height}p",
-                            "vcodec": vcodec,
                             "height": height
                         })
                         seen.add(key)
@@ -91,31 +85,22 @@ def download():
                 }), 400
 
         elif content_type == "audio":
-            best_audio = None
-            best_bitrate = 0
-
-            for fmt in formats:
-                ext = fmt.get("ext")
-                abr = fmt.get("abr")
-                vcodec = fmt.get("vcodec")
-
-                if ext in ["mp3", "m4a", "webm"] and vcodec == "none":
-                    if abr and abr > best_bitrate:
-                        best_bitrate = abr
-                        best_audio = {
-                            "format_id": fmt["format_id"],
-                            "ext": "MP3",
-                            "abr": abr,
-                            "vcodec": vcodec
-                        }
-
+            best_audio = max(
+                (f for f in formats if f.get("vcodec") == "none" and f.get("abr") and f.get("ext") in ["mp3", "m4a", "webm"]),
+                key=lambda f: f["abr"],
+                default=None
+            )
             if not best_audio:
                 return jsonify({
                     "error": "Aucun format audio disponible.",
                     "thumbnail": info.get("thumbnail")
                 }), 400
 
-            filtered.append(best_audio)
+            filtered.append({
+                "format_id": best_audio["format_id"],
+                "ext": "mp3",
+                "abr": best_audio.get("abr")
+            })
 
         return jsonify({
             "title": info.get("title"),
@@ -141,27 +126,23 @@ def combine():
     try:
         with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
             info = ydl.extract_info(url, download=False)
-    except Exception as e:
-        return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
 
-    title = info.get("title") or "video"
-    safe_title = sanitize_filename(title)
+        title = info.get("title", "video")
+        safe_title = sanitize_filename(title)
+        ext = "mp4" if content_type == "video" else "mp3"
+        original = os.path.join(DOWNLOAD_FOLDER, f"{uuid.uuid4()}_original.{ext}")
+        final = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{ext}")
 
-    original_ext = "mp4" if content_type == "video" else "mp3"
-    original_filename = os.path.join(DOWNLOAD_FOLDER, f"{uuid.uuid4()}_original.{original_ext}")
-    final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext}")
+        ydl_opts = {
+            "quiet": True,
+            "outtmpl": original,
+            "format": f"{format_id}+bestaudio/best" if content_type == "video" else format_id,
+            "merge_output_format": ext,
+            "nocheckcertificate": True,
+            "no_warnings": True,
+            "noplaylist": True,
+        }
 
-    ydl_opts = {
-        "quiet": True,
-        "outtmpl": original_filename,
-        "format": f"{format_id}+bestaudio/best" if content_type == "video" else format_id,
-        "merge_output_format": original_ext,
-        "nocheckcertificate": True,
-        "no_warnings": True,
-        "noplaylist": True,
-    }
-
-    try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
@@ -171,33 +152,28 @@ def combine():
                 "-select_streams", "v:0",
                 "-show_entries", "stream=height",
                 "-of", "json",
-                original_filename
+                original
             ]
-            probe_result = subprocess.run(probe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            height_data = json.loads(probe_result.stdout)
-            height = height_data["streams"][0]["height"]
+            result = subprocess.run(probe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            height = json.loads(result.stdout)["streams"][0]["height"]
+            size = get_file_size_in_mb(original)
 
-            file_size_mb = get_file_size_in_mb(original_filename)
-
-            if height > compress_to and file_size_mb >= 100:
+            if height > compress_to and size >= 100:
                 compress_cmd = [
-                    "ffmpeg", "-i", original_filename,
+                    "ffmpeg", "-i", original,
                     "-vf", f"scale=-2:'min({compress_to},ih)'",
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "23",
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    final_filename
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "192k",
+                    final
                 ]
                 subprocess.run(compress_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                os.remove(original_filename)
+                os.remove(original)
             else:
-                os.rename(original_filename, final_filename)
+                os.rename(original, final)
         else:
-            os.rename(original_filename, final_filename)
+            os.rename(original, final)
 
-        return jsonify({"url": f"/file/{os.path.basename(final_filename)}"})
+        return jsonify({"url": f"/file/{os.path.basename(final)}"})
 
     except Exception as e:
         return jsonify({"error": f"Téléchargement échoué : {str(e)}"}), 500
@@ -212,21 +188,16 @@ def serve_file(filename):
     try:
         with open(file_path, 'rb') as f:
             data = f.read()
-
         os.remove(file_path)
-
         return Response(
             io.BytesIO(data),
             mimetype='application/octet-stream',
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"'
-            }
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
         )
-
     except Exception as e:
         return jsonify({"error": f"Erreur lors de l'envoi : {str(e)}"}), 500
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=True)
