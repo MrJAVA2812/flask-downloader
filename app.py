@@ -70,7 +70,7 @@ def download():
                 ext = fmt.get("ext")
                 vcodec = fmt.get("vcodec")
 
-                if ext in ["webm", "mp4"] and height and height >= 300 and vcodec != "none":
+                if ext in ["webm", "mp4"] and height and height >= 140 and vcodec != "none":
                     key = (height, ext)
                     if key not in seen:
                         filtered.append({
@@ -84,7 +84,7 @@ def download():
 
             if not filtered:
                 return jsonify({
-                    "error": "Aucun format (300p ou plus) disponible.",
+                    "error": "Aucun format (140p ou plus) disponible.",
                     "thumbnail": info.get("thumbnail")
                 }), 400
 
