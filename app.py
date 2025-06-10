@@ -16,7 +16,6 @@ DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 FILE_LIFETIME = 600  # 10 minutes
-COOKIES_PATH = "cookies.txt"  # Chemin vers les cookies YouTube
 
 
 def get_file_size_in_mb(path: str) -> float:
@@ -47,14 +46,7 @@ def download():
     if not url:
         return jsonify({"error": "Aucun lien fourni"}), 400
 
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-        "no_warnings": True
-    }
-
-    if os.path.exists(COOKIES_PATH):
-        ydl_opts["cookiefile"] = COOKIES_PATH
+    ydl_opts = {"quiet": True, "skip_download": True, "no_warnings": True}
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -143,17 +135,18 @@ def combine():
         return jsonify({"error": "Paramètres manquants"}), 400
 
     try:
-        info_opts = {
-            "quiet": True,
-            "skip_download": True
-        }
-        if os.path.exists(COOKIES_PATH):
-            info_opts["cookiefile"] = COOKIES_PATH
-
-        with yt_dlp.YoutubeDL(info_opts) as ydl:
+        with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
+
+    # Vérifie que le format demandé est toujours disponible
+    formats = info.get("formats", [])
+    available_format_ids = {f["format_id"] for f in formats}
+    if format_id not in available_format_ids:
+        return jsonify({
+            "error": f"Le format {format_id} n'est plus disponible. Veuillez réessayer avec un autre format."
+        }), 400
 
     title = info.get("title") or "video"
     safe_title = sanitize_filename(title)
@@ -171,9 +164,6 @@ def combine():
         "no_warnings": True,
         "noplaylist": True,
     }
-
-    if os.path.exists(COOKIES_PATH):
-        ydl_opts["cookiefile"] = COOKIES_PATH
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
