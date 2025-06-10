@@ -9,6 +9,7 @@ import re
 import io
 import time
 import logging
+from urllib.parse import urlparse
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO,
@@ -23,6 +24,24 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Durée de vie max des fichiers (en secondes)
 FILE_LIFETIME = 600  # 10 minutes
+
+# Configuration des cookies
+COOKIE_FILES = {
+    "youtube.com": "cookies.txt",
+    "www.youtube.com": "cookies.txt",
+    "facebook.com": "cookies.txt",
+    "www.facebook.com": "cookies.txt",
+    "instagram.com": "cookies.txt",
+    "www.instagram.com": "cookies.txt",
+    "tiktok.com": "cookies.txt",
+    "www.tiktok.com": "cookies.txt"
+}
+
+
+def get_cookie_file(url):
+    hostname = urlparse(url).hostname
+    return COOKIE_FILES.get(hostname)
+
 
 # Configuration de yt-dlp
 YDL_OPTS = {
@@ -78,6 +97,11 @@ def download():
 
     ydl_opts = YDL_OPTS.copy()
     ydl_opts["skip_download"] = True
+
+    cookie_file = get_cookie_file(url)
+    if cookie_file and os.path.exists(cookie_file):
+        ydl_opts["cookiefile"] = cookie_file
+        logging.info(f"Utilisation du fichier de cookies : {cookie_file}")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -170,8 +194,15 @@ def combine():
     if content_type not in ["video", "audio"]:
         return jsonify({"error": "Type de contenu non valide. Doit être 'video' ou 'audio'."}), 400
 
+    cookie_file = get_cookie_file(url)
+
     try:
-        with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+        ydl_opts = YDL_OPTS.copy()
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts["cookiefile"] = cookie_file
+            logging.info(f"Utilisation du fichier de cookies : {cookie_file}")
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         logging.error(f"Impossible d'extraire info vidéo: {str(e)}")
@@ -188,6 +219,9 @@ def combine():
     ydl_opts["outtmpl"] = original_filename
     ydl_opts["format"] = f"{format_id}+bestaudio/best" if content_type == "video" else format_id
     ydl_opts["merge_output_format"] = original_ext
+    if cookie_file and os.path.exists(cookie_file):
+        ydl_opts["cookiefile"] = cookie_file
+        logging.info(f"Utilisation du fichier de cookies : {cookie_file}")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
