@@ -12,12 +12,11 @@ import time
 app = Flask(__name__)
 CORS(app)
 
-# Dossier temporaire pour stocker les fichiers téléchargés
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-# Durée de vie max des fichiers (en secondes)
 FILE_LIFETIME = 600  # 10 minutes
+COOKIES_PATH = "cookies.txt"  # Chemin vers les cookies YouTube
 
 
 def get_file_size_in_mb(path: str) -> float:
@@ -48,7 +47,14 @@ def download():
     if not url:
         return jsonify({"error": "Aucun lien fourni"}), 400
 
-    ydl_opts = {"quiet": True, "skip_download": True, "no_warnings": True}
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "no_warnings": True
+    }
+
+    if os.path.exists(COOKIES_PATH):
+        ydl_opts["cookiefile"] = COOKIES_PATH
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -137,7 +143,14 @@ def combine():
         return jsonify({"error": "Paramètres manquants"}), 400
 
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
+        info_opts = {
+            "quiet": True,
+            "skip_download": True
+        }
+        if os.path.exists(COOKIES_PATH):
+            info_opts["cookiefile"] = COOKIES_PATH
+
+        with yt_dlp.YoutubeDL(info_opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
@@ -158,6 +171,9 @@ def combine():
         "no_warnings": True,
         "noplaylist": True,
     }
+
+    if os.path.exists(COOKIES_PATH):
+        ydl_opts["cookiefile"] = COOKIES_PATH
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -203,9 +219,6 @@ def combine():
 
 @app.route("/file/<path:filename>")
 def serve_file(filename):
-    """
-    Sert le fichier et le supprime après l'envoi.
-    """
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
     if not os.path.exists(file_path):
         return jsonify({"error": "Fichier introuvable"}), 404
@@ -214,7 +227,7 @@ def serve_file(filename):
         with open(file_path, 'rb') as f:
             data = f.read()
 
-        os.remove(file_path)  # Supprime après lecture
+        os.remove(file_path)
 
         return Response(
             io.BytesIO(data),
