@@ -1,244 +1,145 @@
-from flask import Flask, request, jsonify, send_file  # type: ignore
-from flask_cors import CORS
-import yt_dlp
 import os
-import uuid
-import subprocess
 import json
-import re
+import yt_dlp
+import subprocess
+from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask_cors import CORS
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 CORS(app)
 
-# Folder to temporarily store downloaded files
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-COOKIES_PATH = "cookies.txt"
 
-def get_file_size_in_mb(path: str) -> float:
-    """
-    Returns file size in megabytes for given file path.
-    """
-    size_bytes = os.path.getsize(path)
-    return size_bytes / (1024 * 1024)
+# Mapping des domaines à leurs fichiers de cookies
+COOKIE_FILES = {
+    "youtube.com": "cookies.txt",
+    "www.youtube.com": "cookies.txt",
+    "facebook.com": "cookies_facebook.txt",
+    "www.facebook.com": "cookies_facebook.txt"
+}
 
-
-def sanitize_filename(name: str) -> str:
-    """
-    Sanitize the video title to be a safe filename:
-    - Keep alphanumerics, underscores, dashes, and dots
-    - Remove/replace other characters
-    - Limit length to 100 characters
-    """
-    name = name.lower().strip()
-    # Replace spaces and unusual chars with underscore
-    name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
-    # Truncate to 100 characters
-    return name[:100].rstrip("_.")
-
+def get_cookie_file(url):
+    hostname = urlparse(url).hostname
+    return COOKIE_FILES.get(hostname, None)
 
 @app.route("/download", methods=["POST"])
 def download():
-    """
-    Analyzes the video/audio URL, returns available formats for frontend selection.
-    Supports 'video' or 'audio' via the 'type' field in JSON body.
-    """
     data = request.get_json()
     url = data.get("url")
-    content_type = data.get("type", "video")  # default to video type
-
     if not url:
-        return jsonify({"error": "Aucun lien fourni"}), 400
+        return jsonify({"error": "URL manquante"}), 400
+
+    cookie_file = get_cookie_file(url)
 
     ydl_opts = {
         "quiet": True,
         "skip_download": True,
-        "no_warnings": True,
+        "forcejson": True,
+        "extract_flat": False
     }
+
+    if cookie_file and os.path.exists(cookie_file):
+        ydl_opts["cookiefile"] = cookie_file
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-
-        # Handle types with no formats or live videos
-        if info.get("_type") == "url" or info.get("is_live") or not info.get("formats"):
-            return jsonify({
-                "error": "Vidéo non disponible",
-                "thumbnail": info.get("thumbnail"),
-            }), 400
-
-        formats = info["formats"]
-        filtered = []
-        seen = set()
-
-        if content_type == "video":
-            # Filter video formats: ext mp4 or webm, height ≥ 720, and valid vcodec
-            for fmt in formats:
-                height = fmt.get("height")
-                ext = fmt.get("ext")
-                vcodec = fmt.get("vcodec")
-
-                if (
-                    ext in ["webm", "mp4"]
-                    and height and height >= 720
-                    and vcodec != "none"
-                ):
-                    key = (height, ext)
+            formats = info.get("formats", [])
+            filtered_formats = []
+            seen = set()
+            for f in formats:
+                ext = f.get("ext")
+                resolution = f.get("height")
+                format_id = f.get("format_id")
+                if ext == "mp4" and resolution and 720 <= resolution <= 3500:
+                    key = (resolution, ext)
                     if key not in seen:
-                        filtered.append({
-                            "format_id": fmt["format_id"],
-                            "ext": ext,
-                            "resolution": f"{height}p",
-                            "vcodec": vcodec,
-                            "height": height
-                        })
                         seen.add(key)
-
-            if not filtered:
-                return jsonify({
-                    "error": "Aucun format HD (720p ou plus) disponible.",
-                    "thumbnail": info.get("thumbnail")
-                }), 400
-
-        elif content_type == "audio":
-            # Select best audio format (mp3, m4a, webm) with highest abr
-            best_audio = None
-            best_bitrate = 0
-
-            for fmt in formats:
-                ext = fmt.get("ext")
-                abr = fmt.get("abr")  # audio bitrate
-                vcodec = fmt.get("vcodec")
-
-                if ext in ["mp3", "m4a", "webm"] and vcodec == "none":
-                    if abr is not None and abr > best_bitrate:
-                        best_bitrate = abr
-                        best_audio = {
-                            "format_id": fmt["format_id"],
-                            "ext": "MP3",  # Force display as MP3 per requirement
-                            "abr": abr,
-                            "vcodec": vcodec
-                        }
-
-            if not best_audio:
-                return jsonify({
-                    "error": "Aucun format audio disponible.",
-                    "thumbnail": info.get("thumbnail")
-                }), 400
-
-            filtered.append(best_audio)
-
-        # Return video title sanitized, thumbnail, and filtered formats
-        return jsonify({
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "formats": filtered
-        })
-
+                        filtered_formats.append({
+                            "format_id": format_id,
+                            "ext": ext,
+                            "resolution": f"{resolution}p",
+                            "filesize": f.get("filesize", 0)
+                        })
+            return jsonify({
+                "title": info.get("title"),
+                "thumbnail": info.get("thumbnail"),
+                "formats": filtered_formats,
+                "has_audio": any(f.get("acodec") != "none" for f in formats)
+            })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+        return jsonify({
+            "error": "Impossible d'extraire la vidéo. Affichage de la miniature uniquement.",
+            "thumbnail_only": True,
+            "thumbnail": f"http://img.youtube.com/vi/{url.split('v=')[-1]}/0.jpg"
+        })
 
 @app.route("/combine", methods=["POST"])
 def combine():
-    """
-    Download (and compress) requested format.
-    Rename output file to sanitized video title + extension.
-    """
     data = request.get_json()
     url = data.get("url")
     format_id = data.get("format_id")
-    content_type = data.get("type", "video")
-    compress_to = int(data.get("compress_to", 1080))  # max target height
+    only_audio = data.get("only_audio", False)
 
-    if not url or not format_id:
-        return jsonify({"error": "Paramètres manquants"}), 400
+    if not url:
+        return jsonify({"error": "URL manquante"}), 400
 
-    # Extract video info to get title for renaming
-    try:
-        with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except Exception as e:
-        return jsonify({"error": f"Impossible d'extraire info vidéo: {str(e)}"}), 500
+    cookie_file = get_cookie_file(url)
 
-    # Sanitize title for filename
-    title = info.get("title") or "video"
-    safe_title = sanitize_filename(title)
-
-    # Determine file extension
-    original_ext = "mp4" if content_type == "video" else "mp3"
-    original_filename = os.path.join(DOWNLOAD_FOLDER, f"{uuid.uuid4()}_original.{original_ext}")
-    final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext}")
+    filename_base = "video_output"
+    output_path = os.path.join(DOWNLOAD_FOLDER, filename_base + ".mp4")
 
     ydl_opts = {
+        "outtmpl": os.path.join(DOWNLOAD_FOLDER, filename_base + ".%(ext)s"),
+        "merge_output_format": "mp4",
         "quiet": True,
-        "outtmpl": original_filename,
-        "format": f"{format_id}+bestaudio/best" if content_type == "video" else format_id,
-        "merge_output_format": original_ext,
-        "nocheckcertificate": True,
-        "no_warnings": True,
-        "noplaylist": True,
     }
 
+    if cookie_file and os.path.exists(cookie_file):
+        ydl_opts["cookiefile"] = cookie_file
+
+    if only_audio:
+        ydl_opts["format"] = "bestaudio"
+        ydl_opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }]
+        output_path = os.path.join(DOWNLOAD_FOLDER, filename_base + ".mp3")
+    elif format_id:
+        ydl_opts["format"] = format_id + "+bestaudio"
+
     try:
-        # Download the video/audio file
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-
-        if content_type == "video":
-            # Probe video resolution
-            probe_cmd = [
-                "ffprobe", "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=height",
-                "-of", "json",
-                original_filename
-            ]
-            probe_result = subprocess.run(probe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            height_data = json.loads(probe_result.stdout)
-            height = height_data["streams"][0]["height"]
-
-            file_size_mb = get_file_size_in_mb(original_filename)
-
-            # Compress if over threshold resolution & size
-            if height > compress_to and file_size_mb >= 100:
-                compress_cmd = [
-                    "ffmpeg", "-i", original_filename,
-                    "-vf", f"scale=-2:'min({compress_to},ih)'",
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "23",
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    final_filename
-                ]
-                subprocess.run(compress_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                os.remove(original_filename)
-            else:
-                os.rename(original_filename, final_filename)
-        else:
-            # For audio, just rename the file
-            os.rename(original_filename, final_filename)
-
-        # Return URL of file ready for user download
-        return jsonify({"url": f"/file/{os.path.basename(final_filename)}"})
-
+        return send_file(output_path, as_attachment=True)
     except Exception as e:
-        return jsonify({"error": f"Téléchargement échoué : {str(e)}"}), 500
+        return jsonify({"error": str(e)})
 
+@app.route("/check_cookies")
+def check_cookies():
+    # Tu peux modifier l'URL pour tester une vidéo privée
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    cmd = [
+        "yt-dlp",
+        "--cookies", "cookies.txt",
+        "--dump-json",
+        test_url
+    ]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+        if result.returncode == 0:
+            return jsonify({"status": "success", "message": "✅ Les cookies sont valides."})
+        else:
+            return jsonify({"status": "error", "message": f"❌ Erreur : {result.stderr.strip()}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"⚠️ Exception : {str(e)}"})
 
-@app.route("/file/<path:filename>")
+@app.route("/downloads/<path:filename>")
 def serve_file(filename):
-    """
-    Serves the requested file as attachment to trigger download in browser.
-    """
-    file_path = os.path.join(DOWNLOAD_FOLDER, filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    else:
-        return jsonify({"error": "Fichier introuvable"}), 404
-
+    return send_from_directory(DOWNLOAD_FOLDER, filename)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(debug=True)
