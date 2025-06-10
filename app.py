@@ -12,7 +12,7 @@ CORS(app)
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-# Mapping des domaines à leurs fichiers de cookies
+# Mapping des domaines vers leurs fichiers de cookies
 COOKIE_FILES = {
     "youtube.com": "cookies.txt",
     "www.youtube.com": "cookies.txt",
@@ -22,7 +22,7 @@ COOKIE_FILES = {
 
 def get_cookie_file(url):
     hostname = urlparse(url).hostname
-    return COOKIE_FILES.get(hostname, None)
+    return COOKIE_FILES.get(hostname)
 
 @app.route("/download", methods=["POST"])
 def download():
@@ -32,7 +32,6 @@ def download():
         return jsonify({"error": "URL manquante"}), 400
 
     cookie_file = get_cookie_file(url)
-
     ydl_opts = {
         "quiet": True,
         "skip_download": True,
@@ -49,6 +48,7 @@ def download():
             formats = info.get("formats", [])
             filtered_formats = []
             seen = set()
+
             for f in formats:
                 ext = f.get("ext")
                 resolution = f.get("height")
@@ -63,18 +63,29 @@ def download():
                             "resolution": f"{resolution}p",
                             "filesize": f.get("filesize", 0)
                         })
+
             return jsonify({
                 "title": info.get("title"),
                 "thumbnail": info.get("thumbnail"),
                 "formats": filtered_formats,
                 "has_audio": any(f.get("acodec") != "none" for f in formats)
             })
-    except Exception as e:
+
+    except Exception:
+        # Affiche la miniature uniquement si extraction échoue
+        video_id = None
+        if "youtube.com" in url and "v=" in url:
+            video_id = url.split("v=")[-1].split("&")[0]
+        elif "youtu.be" in url:
+            video_id = url.split("/")[-1].split("?")[0]
+
+        thumbnail_url = f"http://img.youtube.com/vi/{video_id}/0.jpg" if video_id else None
         return jsonify({
             "error": "Impossible d'extraire la vidéo. Affichage de la miniature uniquement.",
             "thumbnail_only": True,
-            "thumbnail": f"http://img.youtube.com/vi/{url.split('v=')[-1]}/0.jpg"
+            "thumbnail": thumbnail_url
         })
+
 
 @app.route("/combine", methods=["POST"])
 def combine():
@@ -88,8 +99,9 @@ def combine():
 
     cookie_file = get_cookie_file(url)
 
-    filename_base = "video_output"
-    output_path = os.path.join(DOWNLOAD_FOLDER, filename_base + ".mp4")
+    filename_base = f"video_{str(hash(url))}"
+    output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp4")
+    audio_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp3")
 
     ydl_opts = {
         "outtmpl": os.path.join(DOWNLOAD_FOLDER, filename_base + ".%(ext)s"),
@@ -107,27 +119,35 @@ def combine():
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }]
-        output_path = os.path.join(DOWNLOAD_FOLDER, filename_base + ".mp3")
+        output_file = audio_path
     elif format_id:
         ydl_opts["format"] = format_id + "+bestaudio"
+        output_file = output_path
+    else:
+        return jsonify({"error": "Format vidéo manquant"}), 400
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-        return send_file(output_path, as_attachment=True)
+        return send_file(output_file, as_attachment=True)
     except Exception as e:
-        return jsonify({"error": str(e)})
+        return jsonify({"error": f"Erreur de téléchargement : {str(e)}"}), 500
+    finally:
+        try:
+            if os.path.exists(output_file):
+                os.remove(output_file)
+        except:
+            pass
+
 
 @app.route("/check_cookies")
 def check_cookies():
-    # Tu peux modifier l'URL pour tester une vidéo privée
     test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    cookie_file = "cookies.txt"
     cmd = [
-        "yt-dlp",
-        "--cookies", "cookies.txt",
-        "--dump-json",
-        test_url
+        "yt-dlp", "--cookies", cookie_file, "--dump-json", test_url
     ]
+
     try:
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
         if result.returncode == 0:
@@ -137,11 +157,12 @@ def check_cookies():
     except Exception as e:
         return jsonify({"status": "error", "message": f"⚠️ Exception : {str(e)}"})
 
+
 @app.route("/downloads/<path:filename>")
 def serve_file(filename):
     return send_from_directory(DOWNLOAD_FOLDER, filename)
 
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
