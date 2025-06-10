@@ -53,7 +53,7 @@ def download():
                 ext = f.get("ext")
                 resolution = f.get("height")
                 format_id = f.get("format_id")
-                if ext == "mp4" and resolution and 300 <= resolution <= 3500:
+                if ext == "mp4" and resolution and 100 <= resolution <= 3500:
                     key = (resolution, ext)
                     if key not in seen:
                         seen.add(key)
