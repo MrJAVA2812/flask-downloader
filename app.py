@@ -13,7 +13,10 @@ CORS(app)
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-COOKIES_FILE = "cookies.txt"  # Le fichier doit être dans le même dossier que ce script
+COOKIES_FILE = "cookies.txt"
+
+# 👇 Définir ici ton proxy HTTP/SOCKS (mettre "" si pas de proxy)
+PROXY = "http://username:password@proxyserver:port"  # Exemple : "http://127.0.0.1:8080"
 
 def get_file_size_in_mb(path: str) -> float:
     size_bytes = os.path.getsize(path)
@@ -22,7 +25,7 @@ def get_file_size_in_mb(path: str) -> float:
 def sanitize_filename(name: str) -> str:
     name = name.lower().strip()
     name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
-    return name[:100].rstrip("_.")
+    return name[:100].rstrip("_.") 
 
 @app.route("/download", methods=["POST"])
 def download():
@@ -38,7 +41,8 @@ def download():
         "skip_download": True,
         "no_warnings": True,
         "force_ipv6": True,
-        "cookiefile": COOKIES_FILE  # 👈 Cookies ajoutés ici
+        "cookiefile": COOKIES_FILE,
+        "proxy": PROXY  # Proxy ajouté ici
     }
 
     try:
@@ -132,7 +136,8 @@ def combine():
             "quiet": True,
             "skip_download": True,
             "force_ipv6": True,
-            "cookiefile": COOKIES_FILE  # 👈 Cookies ici aussi
+            "cookiefile": COOKIES_FILE,
+            "proxy": PROXY  # Proxy ajouté ici aussi
         }) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
@@ -153,7 +158,8 @@ def combine():
         "no_warnings": True,
         "noplaylist": True,
         "force_ipv6": True,
-        "cookiefile": COOKIES_FILE  # 👈 encore ici
+        "cookiefile": COOKIES_FILE,
+        "proxy": PROXY  # Proxy ajouté ici aussi
     }
 
     try:
@@ -204,7 +210,6 @@ def serve_file(filename):
     if os.path.exists(file_path):
         response = send_file(file_path, as_attachment=True)
 
-        # Supprime le fichier après l'envoi
         @response.call_on_close
         def cleanup():
             try:
@@ -217,5 +222,4 @@ def serve_file(filename):
         return jsonify({"error": "Fichier introuvable"}), 404
 
 
-if __name__ == "__main__":
-    app.run(debug=True)
+
