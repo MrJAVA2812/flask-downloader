@@ -15,10 +15,12 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 COOKIE_FILES = {
     "youtube.com": "cookies.txt",
     "www.youtube.com": "cookies.txt",
-    "facebook.com": "cookies_facebook.txt",
-    "www.facebook.com": "cookies_facebook.txt",
+    "facebook.com": "cookies.txt",
+    "www.facebook.com": "cookies.txt",
     "instagram.com": "cookies.txt",
-    "www.instagram.com": "cookies.txt"
+    "www.instagram.com": "cookies.txt",
+    "tiktok.com": "cookies.txt",
+    "www.tiktok.com": "cookies.txt"
 }
 
 def get_cookie_file(url):
@@ -106,31 +108,41 @@ def combine():
 
     try:
         # Étape 1 : vérifier que le format existe réellement
-        ydl_probe_opts = {"quiet": True, "skip_download": True, "forcejson": True}
-        if cookie_file and os.path.exists(cookie_file):
-            ydl_probe_opts["cookiefile"] = cookie_file
+        ydl_probe_opts = {
+            "quiet": True,
+            "skip_download": True,
+            "forcejson": True,
+            "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None  # Correct cookiefile handling
+        }
 
         with yt_dlp.YoutubeDL(ydl_probe_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            try:
+                info = ydl.extract_info(url, download=False)
+            except Exception as e:
+                return jsonify({"error": f"Erreur lors de l'extraction des informations de la vidéo : {str(e)}"}), 500
+
             available_format_ids = [f["format_id"] for f in info.get("formats", [])]
 
         if format_id and format_id not in available_format_ids:
-            return jsonify({"error": "Le format demandé n'est pas disponible."}), 400
+            return jsonify({"error": "Le format demandé n'est pas disponible. Veuillez vérifier la liste des formats disponibles."}), 400
 
         # Étape 2 : config du téléchargement
-        ydl_opts = {
-            "quiet": True,
-        }
-
-        if cookie_file and os.path.exists(cookie_file):
-            ydl_opts["cookiefile"] = cookie_file
-
         if only_audio:
-            ydl_opts["outtmpl"] = temp_audio_path
-            ydl_opts["format"] = "bestaudio"
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            os.rename(temp_audio_path, audio_path)
+            ydl_opts_audio = {
+                "quiet": True,
+                "outtmpl": temp_audio_path,
+                "format": "bestaudio",
+                "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None
+            }
+            with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
+                try:
+                    ydl.download([url])
+                except Exception as e:
+                    return jsonify({"error": f"Erreur lors du téléchargement de l'audio (bestaudio) : {str(e)}"}), 500
+            try:
+                os.rename(temp_audio_path, audio_path)
+            except Exception as e:
+                return jsonify({"error": f"Erreur lors du renommage du fichier audio : {str(e)}"}), 500
             output_file = audio_path
 
         elif format_id:
@@ -142,7 +154,10 @@ def combine():
                 "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None
             }
             with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
-                ydl.download([url])
+                try:
+                    ydl.download([url])
+                except Exception as e:
+                    return jsonify({"error": f"Erreur lors du téléchargement de la vidéo (format {format_id}) : {str(e)}"}), 500
 
             # Download audio
             ydl_opts_audio = {
@@ -152,7 +167,10 @@ def combine():
                 "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None
             }
             with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-                ydl.download([url])
+                try:
+                    ydl.download([url])
+                except Exception as e:
+                    return jsonify({"error": f"Erreur lors du téléchargement de l'audio (bestaudio) : {str(e)}"}), 500
 
             # Combine audio and video using ffmpeg
             cmd = [
@@ -163,17 +181,19 @@ def combine():
                 output_path,
                 "-y"  # Overwrite output file if it exists
             ]
-            subprocess.run(cmd, check=True)
+            try:
+                subprocess.run(cmd, check=True)
+            except subprocess.CalledProcessError as e:
+                return jsonify({"error": f"Erreur lors de la combinaison audio/vidéo : {str(e)}"}), 500
+
             output_file = output_path
         else:
             return jsonify({"error": "Format vidéo manquant"}), 400
 
         return send_file(output_file, as_attachment=True)
 
-    except subprocess.CalledProcessError as e:
-        return jsonify({"error": f"Erreur lors de la combinaison audio/vidéo : {str(e)}"}), 500
     except Exception as e:
-        return jsonify({"error": f"Erreur de téléchargement : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur générale : {str(e)}"}), 500
 
     finally:
         # Clean up temporary files
