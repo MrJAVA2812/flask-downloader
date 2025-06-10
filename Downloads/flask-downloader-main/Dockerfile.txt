@@ -1,0 +1,20 @@
+# Utilise une image légère de Python
+FROM python:3.11-slim
+
+# Crée un dossier dans le conteneur pour ton app
+WORKDIR /app
+
+# Copie les fichiers de ton projet dans le conteneur
+COPY . /app
+
+# Installe les dépendances Python
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Vérifie que le fichier cookies.txt existe, sinon crée un vide
+RUN test -f cookies.txt || echo "# cookies" > cookies.txt
+
+# Ouvre le port 5000 pour accéder à l'app Flask
+EXPOSE 5000
+
+# Lance le serveur avec gunicorn (ici 'server' doit être le nom de ton fichier Python sans extension)
+CMD ["gunicorn", "-b", "0.0.0.0:5000", "server:app"]
