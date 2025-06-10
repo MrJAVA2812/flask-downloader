@@ -229,5 +229,5 @@ def serve_file(filename):
 
 
 if __name__ == "__main__":
-    cleanup_old_files(DOWNLOAD_FOLDER, FILE_LIFETIME)
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # récupère le port fourni par la plateforme ou 5000 par défaut
+    app.run(host="0.0.0.0", port=port, debug=True)
