@@ -12,11 +12,8 @@ import time
 app = Flask(__name__)
 CORS(app)
 
-# Dossier temporaire pour stocker les fichiers téléchargés
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-
-# Durée de vie max des fichiers (en secondes)
 FILE_LIFETIME = 600  # 10 minutes
 
 
@@ -28,7 +25,7 @@ def get_file_size_in_mb(path: str) -> float:
 def sanitize_filename(name: str) -> str:
     name = name.lower().strip()
     name = re.sub(r"[^a-z0-9_\-\.]+", "_", name)
-    return name[:100].rstrip("_.")  # max 100 caractères
+    return name[:100].rstrip("_.")
 
 
 def cleanup_old_files(folder: str, max_age_seconds: int):
@@ -37,6 +34,11 @@ def cleanup_old_files(folder: str, max_age_seconds: int):
         path = os.path.join(folder, filename)
         if os.path.isfile(path) and now - os.path.getmtime(path) > max_age_seconds:
             os.remove(path)
+
+
+@app.route("/")
+def index():
+    return "🚀 Serveur Flask actif et opérationnel sur Railway !"
 
 
 @app.route("/download", methods=["POST"])
@@ -203,9 +205,6 @@ def combine():
 
 @app.route("/file/<path:filename>")
 def serve_file(filename):
-    """
-    Sert le fichier et le supprime après l'envoi.
-    """
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
     if not os.path.exists(file_path):
         return jsonify({"error": "Fichier introuvable"}), 404
@@ -214,7 +213,7 @@ def serve_file(filename):
         with open(file_path, 'rb') as f:
             data = f.read()
 
-        os.remove(file_path)  # Supprime après lecture
+        os.remove(file_path)
 
         return Response(
             io.BytesIO(data),
@@ -229,5 +228,5 @@ def serve_file(filename):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # récupère le port fourni par la plateforme ou 5000 par défaut
-    app.run(host="0.0.0.0", port=port, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
