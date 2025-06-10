@@ -16,7 +16,9 @@ COOKIE_FILES = {
     "youtube.com": "cookies.txt",
     "www.youtube.com": "cookies.txt",
     "facebook.com": "cookies_facebook.txt",
-    "www.facebook.com": "cookies_facebook.txt"
+    "www.facebook.com": "cookies_facebook.txt",
+    "instagram.com": "cookies_instagram.txt",
+    "www.instagram.com": "cookies_instagram.txt"
 }
 
 def get_cookie_file(url):
