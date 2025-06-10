@@ -12,7 +12,6 @@ CORS(app)
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-# Mapping des domaines vers leurs fichiers de cookies
 COOKIE_FILES = {
     "youtube.com": "cookies.txt",
     "www.youtube.com": "cookies.txt",
@@ -72,7 +71,6 @@ def download():
             })
 
     except Exception:
-        # Affiche la miniature uniquement si extraction échoue
         video_id = None
         if "youtube.com" in url and "v=" in url:
             video_id = url.split("v=")[-1].split("&")[0]
@@ -98,44 +96,62 @@ def combine():
         return jsonify({"error": "URL manquante"}), 400
 
     cookie_file = get_cookie_file(url)
-
     filename_base = f"video_{str(hash(url))}"
     output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp4")
     audio_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp3")
 
-    ydl_opts = {
-        "outtmpl": os.path.join(DOWNLOAD_FOLDER, filename_base + ".%(ext)s"),
-        "merge_output_format": "mp4",
-        "quiet": True,
-    }
-
-    if cookie_file and os.path.exists(cookie_file):
-        ydl_opts["cookiefile"] = cookie_file
-
-    if only_audio:
-        ydl_opts["format"] = "bestaudio"
-        ydl_opts["postprocessors"] = [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }]
-        output_file = audio_path
-    elif format_id:
-        ydl_opts["format"] = format_id + "+bestaudio"
-        output_file = output_path
-    else:
-        return jsonify({"error": "Format vidéo manquant"}), 400
-
     try:
+        # Étape 1 : vérifier que le format existe réellement
+        ydl_probe_opts = {"quiet": True, "skip_download": True, "forcejson": True}
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_probe_opts["cookiefile"] = cookie_file
+
+        with yt_dlp.YoutubeDL(ydl_probe_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            available_format_ids = [f["format_id"] for f in info.get("formats", [])]
+
+        if format_id and format_id not in available_format_ids:
+            return jsonify({"error": "Le format demandé n'est pas disponible."}), 400
+
+        # Étape 2 : config du téléchargement
+        ydl_opts = {
+            "outtmpl": os.path.join(DOWNLOAD_FOLDER, filename_base + ".%(ext)s"),
+            "merge_output_format": "mp4",
+            "quiet": True,
+        }
+
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts["cookiefile"] = cookie_file
+
+        if only_audio:
+            ydl_opts["format"] = "bestaudio"
+            ydl_opts["postprocessors"] = [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }]
+            output_file = audio_path
+        elif format_id:
+            ydl_opts["format"] = format_id + "+bestaudio/best"
+            output_file = output_path
+        else:
+            return jsonify({"error": "Format vidéo manquant"}), 400
+
+        # Étape 3 : téléchargement
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
+
         return send_file(output_file, as_attachment=True)
+
     except Exception as e:
         return jsonify({"error": f"Erreur de téléchargement : {str(e)}"}), 500
+
     finally:
         try:
-            if os.path.exists(output_file):
-                os.remove(output_file)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
         except:
             pass
 
