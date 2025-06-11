@@ -254,20 +254,20 @@ def combine():
                         "-crf", "23",
                         "-c:a", "aac",
                         "-b:a", "192k",
-                        original_filename.replace("_original", "") # Use the title for the compressed file
+                        os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext.split('.')[-1]}") # Use the title for the compressed file
                     ]
                     subprocess.run(compress_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                     os.remove(original_filename)
-                    final_filename = original_filename.replace("_original", "") # Update final_filename
+                    final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext.split('.')[-1]}") # Update final_filename
                 except subprocess.CalledProcessError as e:
                     logging.error(f"Erreur lors de la compression de la vidéo : {e}")
-                    final_filename = original_filename.replace("_original", "")
+                    final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext.split('.')[-1]}")
                     os.rename(original_filename, final_filename)  # Conserver l'original en cas d'échec
             else:
-                final_filename = original_filename.replace("_original", "")
+                final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext.split('.')[-1]}")
                 os.rename(original_filename, final_filename)
         else:
-            final_filename = original_filename.replace("_original", "")
+            final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext.split('.')[-1]}")
             os.rename(original_filename, final_filename)
 
         return jsonify({"url": f"/file/{os.path.basename(final_filename)}"})
