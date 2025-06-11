@@ -213,7 +213,6 @@ def combine():
 
     original_ext = "mp4" if content_type == "video" else "mp3"
     original_filename = os.path.join(DOWNLOAD_FOLDER, f"{uuid.uuid4()}_original.{original_ext}")
-    final_filename = os.path.join(DOWNLOAD_FOLDER, f"{safe_title}.{original_ext}")
 
     ydl_opts = YDL_OPTS.copy()
     ydl_opts["outtmpl"] = original_filename
@@ -255,16 +254,20 @@ def combine():
                         "-crf", "23",
                         "-c:a", "aac",
                         "-b:a", "192k",
-                        final_filename
+                        original_filename.replace("_original", "") # Use the title for the compressed file
                     ]
                     subprocess.run(compress_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                     os.remove(original_filename)
+                    final_filename = original_filename.replace("_original", "") # Update final_filename
                 except subprocess.CalledProcessError as e:
                     logging.error(f"Erreur lors de la compression de la vidéo : {e}")
+                    final_filename = original_filename.replace("_original", "")
                     os.rename(original_filename, final_filename)  # Conserver l'original en cas d'échec
             else:
+                final_filename = original_filename.replace("_original", "")
                 os.rename(original_filename, final_filename)
         else:
+            final_filename = original_filename.replace("_original", "")
             os.rename(original_filename, final_filename)
 
         return jsonify({"url": f"/file/{os.path.basename(final_filename)}"})
