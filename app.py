@@ -33,7 +33,7 @@ COOKIE_FILES = {
 def check_youtube_cookies():
     try:
         ydl_opts = {
-            'COOKIE_FILES': 'www.youtube.com_cookies.txt',
+            'cookiefile': 'www.youtube.com_cookies.txt',
             'quiet': True,
             'skip_download': True,
             'forcejson': True,
@@ -42,17 +42,15 @@ def check_youtube_cookies():
             ydl.extract_info("https://www.youtube.com/feed/library", download=False)
         return True
     except Exception as e:
-        print(f"Erreur de cookies : {e}")
+        logging.error(f"Cookie error: {e}")
         return False
-
 
 @app.route("/check_cookies")
 def check_cookies():
     if check_youtube_cookies():
-        return jsonify({"status": "valid", "message": "Cookies valides : connexion à YouTube réussie."})
+        return jsonify({"status": "valid", "message": "Cookies valid: YouTube connection successful."})
     else:
-        return jsonify({"status": "invalid", "message": "Cookies invalides ou expirés. Veuillez les remplacer."}), 401
-
+        return jsonify({"status": "invalid", "message": "Invalid or expired cookies. Please replace them."}), 401
 
 # Helper function to get cookie file
 def get_cookie_file(url):
@@ -72,7 +70,7 @@ def download():
     data = request.get_json()
     url = data.get("url")
     if not url:
-        return jsonify({"error": "URL manquante"}), 400
+        return jsonify({"error": "Missing URL"}), 400
 
     cookie_file = get_cookie_file(url)
     ydl_opts = {
@@ -80,7 +78,7 @@ def download():
         "skip_download": True,
         "forcejson": True,
         "extract_flat": False,
-        "nocheckcertificate": True,  # Add this to handle certificate issues
+        "nocheckcertificate": True,  # Handle certificate issues
     }
 
     if cookie_file and os.path.exists(cookie_file):
@@ -116,7 +114,7 @@ def download():
             })
 
     except Exception as e:
-        logging.exception("Error extracting video info")  # Log the full exception
+        logging.exception("Error extracting video info")
         video_id = None
         if "youtube.com" in url and "v=" in url:
             video_id = url.split("v=")[-1].split("&")[0]
@@ -125,7 +123,7 @@ def download():
 
         thumbnail_url = f"http://img.youtube.com/vi/{video_id}/0.jpg" if video_id else None
         return jsonify({
-            "error": f"Impossible d'extraire la vidéo. Affichage de la miniature uniquement. Erreur: {str(e)}",
+            "error": f"Unable to extract video. Displaying thumbnail only. Error: {str(e)}",
             "thumbnail_only": True,
             "thumbnail": thumbnail_url
         })
@@ -139,9 +137,11 @@ def combine():
     only_audio = data.get("only_audio", False)
 
     if not url:
-        return jsonify({"error": "URL manquante"}), 400
+        return jsonify({"error": "Missing URL"}), 400
 
     cookie_file = get_cookie_file(url)
+    temp_video_path = None
+    temp_audio_path = None
 
     try:
         # Step 1: Extract video info to get the title
@@ -180,8 +180,7 @@ def combine():
                     ydl.download([url])
             except yt_dlp.utils.DownloadError as e:
                 logging.error(f"Audio download error: {e}")
-                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}.  Essayez de télécharger la vidéo avec audio et vidéo combinés."}, 500)
-
+                return jsonify({"error": f"Audio download error: {str(e)}. Try downloading the video with combined audio and video."}), 500
 
         elif format_id:
             filename_base = f"{sanitized_title}"
@@ -202,13 +201,13 @@ def combine():
                     ydl.download([url])
             except yt_dlp.utils.DownloadError as e:
                 logging.error(f"Video download error: {e}")
-                return jsonify({"error": f"Erreur de téléchargement vidéo : {str(e)}"}), 500
+                return jsonify({"error": f"Video download error: {str(e)}"}), 500
 
             # Download audio
             ydl_opts_audio = {
                 "quiet": True,
                 "outtmpl": temp_audio_path,
-                "format": "bestaudio/best", # Try bestaudio, fallback to best
+                "format": "bestaudio/best",  # Try bestaudio, fallback to best
                 "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None,
                 "nocheckcertificate": True,
             }
@@ -217,7 +216,7 @@ def combine():
                     ydl.download([url])
             except yt_dlp.utils.DownloadError as e:
                 logging.error(f"Audio download error: {e}")
-                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}. Essayez de télécharger la vidéo avec audio et vidéo combinés."}, 500)
+                return jsonify({"error": f"Audio download error: {str(e)}. Try downloading the video with combined audio and video."}), 500
 
             # Combine audio and video using ffmpeg
             cmd = [
@@ -234,41 +233,23 @@ def combine():
                 logging.error(f"FFmpeg command failed: {e.stderr}")
                 return jsonify({"error": f"FFmpeg command failed: {e.stderr}"}), 500
         else:
-            return jsonify({"error": "Format vidéo manquant"}), 400
+            return jsonify({"error": "Missing video format"}), 400
 
         return send_file(output_path, as_attachment=True, download_name=f"{sanitized_title}{os.path.splitext(output_path)[1]}")
 
     except Exception as e:
         logging.exception("Download or combine error")
-        return jsonify({"error": f"Erreur de téléchargement : {str(e)}"}), 500
+        return jsonify({"error": f"Download error: {str(e)}"}), 500
 
     finally:
         # Clean up temporary files
         try:
-            if os.path.exists(temp_video_path):
+            if temp_video_path and os.path.exists(temp_video_path):
                 os.remove(temp_video_path)
-            if os.path.exists(temp_audio_path):
+            if temp_audio_path and os.path.exists(temp_audio_path):
                 os.remove(temp_audio_path)
         except Exception as e:
-            logging.error(f"Erreur lors de la suppression des fichiers temporaires : {e}")
-
-# Route to check cookie validity
-@app.route("/check_cookies")
-def check_cookies():
-    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-    cookie_file = "cookies.txt"
-    cmd = [
-        "yt-dlp", "--cookies", cookie_file, "--dump-json", test_url
-    ]
-
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
-        if result.returncode == 0:
-            return jsonify({"status": "success", "message": "✅ Les cookies sont valides."})
-        else:
-            return jsonify({"status": "error", "message": f"❌ Erreur : {result.stderr.strip()}"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": f"⚠️ Exception : {str(e)}"})
+            logging.error(f"Error removing temporary files: {e}")
 
 # Route to serve files
 @app.route("/downloads/<path:filename>")
