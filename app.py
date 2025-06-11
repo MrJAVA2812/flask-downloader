@@ -325,6 +325,32 @@ def check_cookies():
     except Exception as e:
         return jsonify({"status": "error", "message": f"⚠️ Exception : {str(e)}"})
 
+fetch('/combine', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+        url: videoUrl,
+        format_id: selectedFormat,
+        type: contentType
+    })
+})
+.then(response => response.json())
+.then(data => {
+    if (data.error) {
+        console.error(data.error);
+        // Handle error
+    } else {
+        const downloadLink = document.createElement('a');
+        downloadLink.href = data.url;
+        downloadLink.download = `${data.title}.${data.url.split('.').pop()}`; // Set the filename
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+    }
+});
+
 
 
 if __name__ == "__main__":
