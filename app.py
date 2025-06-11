@@ -150,8 +150,13 @@ def combine():
             output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp3")
             ydl_opts["outtmpl"] = output_path
             ydl_opts["format"] = "bestaudio"
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            except yt_dlp.utils.DownloadError as e:
+                logging.error(f"Audio download error: {e}")
+                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}"}), 500
+
 
         elif format_id:
             filename_base = f"{sanitized_title}"
@@ -167,8 +172,12 @@ def combine():
                 "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None,
                 "nocheckcertificate": True,
             }
-            with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
-                ydl.download([url])
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
+                    ydl.download([url])
+            except yt_dlp.utils.DownloadError as e:
+                logging.error(f"Video download error: {e}")
+                return jsonify({"error": f"Erreur de téléchargement vidéo : {str(e)}"}), 500
 
             # Download audio
             ydl_opts_audio = {
@@ -178,8 +187,12 @@ def combine():
                 "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None,
                 "nocheckcertificate": True,
             }
-            with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-                ydl.download([url])
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
+                    ydl.download([url])
+            except yt_dlp.utils.DownloadError as e:
+                logging.error(f"Audio download error: {e}")
+                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}"}), 500
 
             # Combine audio and video using ffmpeg
             cmd = [
