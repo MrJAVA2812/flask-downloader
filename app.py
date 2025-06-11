@@ -30,6 +30,30 @@ COOKIE_FILES = {
     "www.tiktok.com": "cookies.txt"
 }
 
+def check_youtube_cookies():
+    try:
+        ydl_opts = {
+            'COOKIE_FILES': 'www.youtube.com_cookies.txt',
+            'quiet': True,
+            'skip_download': True,
+            'forcejson': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info("https://www.youtube.com/feed/library", download=False)
+        return True
+    except Exception as e:
+        print(f"Erreur de cookies : {e}")
+        return False
+
+
+@app.route("/check_cookies")
+def check_cookies():
+    if check_youtube_cookies():
+        return jsonify({"status": "valid", "message": "Cookies valides : connexion à YouTube réussie."})
+    else:
+        return jsonify({"status": "invalid", "message": "Cookies invalides ou expirés. Veuillez les remplacer."}), 401
+
+
 # Helper function to get cookie file
 def get_cookie_file(url):
     hostname = urlparse(url).hostname
