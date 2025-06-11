@@ -305,6 +305,24 @@ def serve_file(filename):
         logging.error(f"Erreur lors de l'envoi : {str(e)}")
         return jsonify({"error": f"Erreur lors de l'envoi : {str(e)}"}), 500
 
+@app.route("/check_cookies")
+def check_cookies():
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    cookie_file = "cookies.txt"
+    cmd = [
+        "yt-dlp", "--cookies", cookie_file, "--dump-json", test_url
+    ]
+
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+        if result.returncode == 0:
+            return jsonify({"status": "success", "message": "✅ Les cookies sont valides."})
+        else:
+            return jsonify({"status": "error", "message": f"❌ Erreur : {result.stderr.strip()}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"⚠️ Exception : {str(e)}"})
+
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
