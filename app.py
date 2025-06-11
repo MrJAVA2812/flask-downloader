@@ -6,6 +6,7 @@ import logging
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from urllib.parse import urlparse
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,6 +34,13 @@ COOKIE_FILES = {
 def get_cookie_file(url):
     hostname = urlparse(url).hostname
     return COOKIE_FILES.get(hostname)
+
+def sanitize_filename(filename):
+    """Sanitize a filename to remove invalid characters."""
+    filename = re.sub(r'[<>:"/\\|?*]', '_', filename)  # Replace reserved characters with underscores
+    filename = filename.replace('#', '_')  # Replace '#' with underscore
+    filename = filename.strip()  # Remove leading/trailing whitespace
+    return filename
 
 # Route to fetch video formats
 @app.route("/download", methods=["POST"])
@@ -110,34 +118,23 @@ def combine():
         return jsonify({"error": "URL manquante"}), 400
 
     cookie_file = get_cookie_file(url)
-    filename_base = f"video_{str(hash(url))}"
-    output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp4")
-    audio_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp3")
-    temp_video_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}_video.mp4")
-    temp_audio_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}_audio.mp3")
 
     try:
-        # Step 1: Verify the format exists
-        ydl_probe_opts = {
+        # Step 1: Extract video info to get the title
+        ydl_opts_info = {
             "quiet": True,
             "skip_download": True,
             "forcejson": True,
+            "extract_flat": False,
             "nocheckcertificate": True,
         }
         if cookie_file and os.path.exists(cookie_file):
-            ydl_probe_opts["cookiefile"] = cookie_file
+            ydl_opts_info["cookiefile"] = cookie_file
 
-        with yt_dlp.YoutubeDL(ydl_probe_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception as probe_exception:
-                 logging.error(f"Probe extraction failed: {probe_exception}")
-                 return jsonify({"error": f"Failed to probe URL: {probe_exception}"}), 400
-
-            available_format_ids = [f["format_id"] for f in info.get("formats", [])]
-
-        if format_id and format_id not in available_format_ids:
-            return jsonify({"error": "Le format demandé n'est pas disponible."}), 400
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+            info = ydl.extract_info(url, download=False)
+            video_title = info.get("title", "default_filename")
+            sanitized_title = sanitize_filename(video_title)
 
         # Step 2: Configure download
         ydl_opts = {
@@ -149,14 +146,19 @@ def combine():
             ydl_opts["cookiefile"] = cookie_file
 
         if only_audio:
-            ydl_opts["outtmpl"] = temp_audio_path
+            filename_base = f"{sanitized_title}"
+            output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp3")
+            ydl_opts["outtmpl"] = output_path
             ydl_opts["format"] = "bestaudio"
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
-            os.rename(temp_audio_path, audio_path)
-            output_file = audio_path
 
         elif format_id:
+            filename_base = f"{sanitized_title}"
+            output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp4")
+            temp_video_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}_video.mp4")
+            temp_audio_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}_audio.mp3")
+
             # Download video
             ydl_opts_video = {
                 "quiet": True,
@@ -193,11 +195,10 @@ def combine():
             except subprocess.CalledProcessError as e:
                 logging.error(f"FFmpeg command failed: {e.stderr}")
                 return jsonify({"error": f"FFmpeg command failed: {e.stderr}"}), 500
-            output_file = output_path
         else:
             return jsonify({"error": "Format vidéo manquant"}), 400
 
-        return send_file(output_file, as_attachment=True)
+        return send_file(output_path, as_attachment=True, download_name=f"{sanitized_title}{os.path.splitext(output_path)[1]}")
 
     except Exception as e:
         logging.exception("Download or combine error")
@@ -210,10 +211,6 @@ def combine():
                 os.remove(temp_video_path)
             if os.path.exists(temp_audio_path):
                 os.remove(temp_audio_path)
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
-            if os.path.exists(output_path):
-                os.remove(output_path)
         except Exception as e:
             logging.error(f"Erreur lors de la suppression des fichiers temporaires : {e}")
 
