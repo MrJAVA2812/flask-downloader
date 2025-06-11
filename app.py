@@ -20,8 +20,8 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Cookie files
 COOKIE_FILES = {
-    "youtube.com": "cookies.txt",
-    "www.youtube.com": "cookies.txt",
+    "youtube.com": "www.youtube.com_cookies.txt",
+    "www.youtube.com": "www.youtube.com_cookies.txt",
     "facebook.com": "cookies.txt",
     "www.facebook.com": "cookies.txt",
     "instagram.com": "cookies.txt",
