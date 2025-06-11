@@ -149,13 +149,14 @@ def combine():
             filename_base = f"{sanitized_title}"
             output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_base}.mp3")
             ydl_opts["outtmpl"] = output_path
-            ydl_opts["format"] = "bestaudio"
+            ydl_opts["format"] = "bestaudio/best"  # Try bestaudio, fallback to best
+
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
             except yt_dlp.utils.DownloadError as e:
                 logging.error(f"Audio download error: {e}")
-                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}"}), 500
+                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}.  Essayez de télécharger la vidéo avec audio et vidéo combinés."}, 500)
 
 
         elif format_id:
@@ -183,7 +184,7 @@ def combine():
             ydl_opts_audio = {
                 "quiet": True,
                 "outtmpl": temp_audio_path,
-                "format": "bestaudio",
+                "format": "bestaudio/best", # Try bestaudio, fallback to best
                 "cookiefile": cookie_file if cookie_file and os.path.exists(cookie_file) else None,
                 "nocheckcertificate": True,
             }
@@ -192,7 +193,7 @@ def combine():
                     ydl.download([url])
             except yt_dlp.utils.DownloadError as e:
                 logging.error(f"Audio download error: {e}")
-                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}"}), 500
+                return jsonify({"error": f"Erreur de téléchargement audio : {str(e)}. Essayez de télécharger la vidéo avec audio et vidéo combinés."}, 500)
 
             # Combine audio and video using ffmpeg
             cmd = [
